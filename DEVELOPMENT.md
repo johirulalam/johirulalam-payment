@@ -1,138 +1,159 @@
 # Development Guide
 
-## IDE Errors Explained
+This guide explains how to extend the package by adding new payment providers.
 
-You may see "undefined" errors in your IDE for:
-- `Illuminate\Support\ServiceProvider`
-- `Stripe\Stripe`
-- `config()`, `app()`, `route()` functions
-- Other Laravel/Stripe classes
+## Adding a New Payment Provider
 
-**These are NOT real errors!** They appear because:
+Follow these steps to add a new payment provider (e.g., Razorpay, Braintree, Square, etc.)
 
-1. The Laravel framework is not installed in this package directory
-2. The Stripe SDK is not installed yet
-3. This is a **Laravel package**, not a standalone application
+### Step 1: Create Provider Directory Structure
 
-## How to Fix IDE Errors
-
-### Option 1: Install Dependencies (Recommended for Development)
+Create the necessary directories for your new provider:
 
 ```bash
-cd /home/johirulalam/my-package/sayed-payment-laravel
-composer install
+src/Drivers/YourProvider/Payments
+src/Drivers/YourProvider/Webhooks
 ```
 
-This will install all dependencies defined in `composer.json`.
+Replace `YourProvider` with your payment provider name (e.g., `Razorpay`, `Square`, `Braintree`).
 
-### Option 2: IDE Configuration
+### Step 2: Create Payment Processor Class
 
-Add this to your workspace settings (VSCode example):
+Create `src/Drivers/YourProvider/Payments/YourProviderProcessor.php`:
 
-```json
-{
-    "php.suggest.basic": false,
-    "intelephense.environment.includePaths": [
-        "/path/to/your/laravel/project/vendor"
-    ]
-}
-```
-
-### Option 3: Use Laravel IDE Helper
-
-When using this package in a Laravel project:
-
-```bash
-composer require --dev barryvdh/laravel-ide-helper
-php artisan ide-helper:generate
-```
-
-## Testing the Package
-
-### In a Real Laravel Project
-
-1. **Create a Laravel project** (if you don't have one):
-```bash
-composer create-project laravel/laravel test-app
-cd test-app
-```
-
-2. **Add this package as a local dependency**:
-
-Edit `composer.json`:
-```json
-{
-    "repositories": [
-        {
-            "type": "path",
-            "url": "../sayed-payment-laravel"
-        }
-    ]
-}
-```
-
-3. **Install the package**:
-```bash
-composer require sayed/payment-laravel
-```
-
-4. **Publish config**:
-```bash
-php artisan vendor:publish --tag=payment-config
-```
-
-5. **Configure `.env`**:
-```env
-STRIPE_SECRET_KEY=sk_test_xxxxx
-STRIPE_WEBHOOK_SECRET=whsec_xxxxx
-```
-
-6. **Use it**:
 ```php
-use Sayed\Payment\Facades\Payment;
+<?php
 
-$result = Payment::createAdapter('stripe')->checkout([
-    'has_price_id' => false,
-    'currency' => 'usd',
-    'amount' => 5000,
-    'product' => ['title' => 'Test Product'],
-    'mode' => 'payment',
-    'success_url' => 'http://localhost/success',
-    'cancel_url' => 'http://localhost/cancel',
-]);
+namespace Sayed\Payment\Drivers\YourProvider\Payments;
+
+use Sayed\Payment\Services\Payments\PaymentProcessor;
+use Sayed\Payment\DTOs\CheckoutDTO;
+use Sayed\Payment\DTOs\RefundDTO;
+use Exception;
+
+class YourProviderProcessor extends PaymentProcessor
+{
+    /**
+     * Create checkout session
+     * 
+     * @param array $payload
+     * @return array
+     * @throws Exception
+     */
+    public function checkout(array $payload): array
+    {
+
+    }
+
+    /**
+     * Refund payment
+     * 
+     * @param string $transactionId
+     * @param float $amount
+     * @return array
+     * @throws Exception
+     */
+    public function refundPayment(string $transactionId, float $amount): array
+    {
+    }
+
+}
 ```
 
-## Why This Happens
+### Step 3: Create Webhook Handler Class
 
-This package is designed to be **installed in a Laravel application**. When installed properly:
+Create `src/Drivers/YourProvider/Webhooks/YourProviderHandler.php`:
 
-✅ Laravel provides the `ServiceProvider` base class  
-✅ Laravel provides helper functions (`config()`, `app()`, etc.)  
-✅ Composer autoloads the Stripe SDK  
-✅ All dependencies are resolved automatically
+```php
+<?php
 
-## Package Structure is Correct
+namespace Sayed\Payment\Drivers\YourProvider\Webhooks;
 
-Despite IDE warnings, the package structure is **100% correct**:
+use Exception;
 
-- ✅ All PHP files exist
-- ✅ All classes are properly namespaced
-- ✅ All inheritance is correct
-- ✅ All imports are proper
-- ✅ Code follows Laravel conventions
+class YourProviderHandler extends WebhookProcessor
+{
+    public function process(string $payload, array $headers): array
+    {
+    }
 
-The "errors" you see are just your IDE not having access to Laravel's framework files.
+    public function validate(string $payload, array $headers): array
+    {
+    }
 
-## Quick Test
+    public function transform($payload, string $eventType): CheckoutEventDTO|SubscriptionEventDTO|InvoiceEventDTO
+    {
+    }
 
-To quickly verify everything works:
+    protected function transformCheckout(array $payload, string $eventType): CheckoutEventDTO
+    {
+    }
 
-```bash
-# Install dependencies
-composer install
+    protected function transformSubscription(array $payload, string $eventType): SubscriptionEventDTO
+    {
+    }
 
-# Check autoload
-composer dump-autoload
+    protected function transformInvoice(array $payload, string $eventType): InvoiceEventDTO
+    {
+    }
 
-# All errors should disappear!
+    protected function verifySignature(string $payload, string $signature): bool
+    {
+    }
+}
 ```
+
+### Step 4: Register Provider in Configuration
+
+Update `config/payment.php`:
+
+
+### Step 5: Register in Payment Registry
+
+Update `src/Registry/PaymentRegistry.php`:
+
+```php
+protected static array $drivers = [
+    'yourprovider' => \Sayed\Payment\Drivers\YourProvider\Payments\YourProviderProcessor::class,
+];
+```
+
+### Step 6: Register in Webhook Registry
+
+Update `src/Registry/WebhookRegistry.php`:
+
+```php
+protected static array $handlers = [
+    'yourprovider' => \Sayed\Payment\Drivers\YourProvider\Webhooks\YourProviderHandler::class,
+];
+```
+
+### Step 7: Update Provider Identifier
+
+Update `src/Services/Webhooks/ProviderIdentifier.php` to detect your provider's webhooks:
+
+```php
+public static function identify(array $headers): string
+{
+    // Add your provider detection
+    if (isset($headers['x-yourprovider-signature'])) {
+        return 'yourprovider';
+    }
+
+    throw new \Exception('Unable to identify payment provider from headers');
+}
+```
+
+### Step 8: Add Environment Variables
+
+Update `.env.example`:
+
+```env
+# Your Provider Configuration
+YOURPROVIDER_API_KEY=
+YOURPROVIDER_API_SECRET=
+YOURPROVIDER_WEBHOOK_SECRET=
+```
+
+
+**Ready to add a new provider?** Start with Step 1! 🚀
