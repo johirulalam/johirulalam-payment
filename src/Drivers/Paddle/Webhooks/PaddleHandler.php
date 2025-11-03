@@ -3,6 +3,7 @@
 namespace Sayed\Payment\Drivers\Paddle\Webhooks;
 
 use Sayed\Payment\Services\Webhooks\WebhookProcessor;
+use Sayed\Payment\Services\Events\EventDispatcher;
 use Sayed\Payment\DTOs\Webhooks\CheckoutEventDTO;
 use Sayed\Payment\DTOs\Webhooks\SubscriptionEventDTO;
 use Sayed\Payment\DTOs\Webhooks\InvoiceEventDTO;
@@ -23,10 +24,51 @@ class PaddleHandler extends WebhookProcessor
             $eventType = $data['event_type'] ?? '';
             $dto = $this->transform($data, $eventType);
 
+            // Dispatch event to user-defined listeners
+            $this->dispatchEvent($dto, $eventType, $payload);
+
             return $dto->toArray();
         } catch (Exception $e) {
             throw new Exception('Error processing Paddle webhook: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Dispatch event to user-defined listeners
+     */
+    protected function dispatchEvent($dto, string $eventType, string $rawPayload): void
+    {
+        $dispatcher = new EventDispatcher();
+        $eventName = $this->getEventName($eventType);
+
+        if ($dto instanceof InvoiceEventDTO) {
+            $dispatcher->dispatchInvoice($dto, 'paddle', $eventName, $rawPayload);
+        } elseif ($dto instanceof CheckoutEventDTO) {
+            $dispatcher->dispatchCheckout($dto, 'paddle', $eventName, $rawPayload);
+        } elseif ($dto instanceof SubscriptionEventDTO) {
+            $dispatcher->dispatchSubscription($dto, 'paddle', $eventName, $rawPayload);
+        }
+    }
+
+    /**
+     * Get simplified event name from Paddle event type
+     */
+    protected function getEventName(string $eventType): string
+    {
+        // Convert Paddle event types to simplified names
+        $eventMap = [
+            'transaction.completed' => 'completed',
+            'transaction.paid' => 'completed',
+            'transaction.canceled' => 'expired',
+            'subscription.created' => 'created',
+            'subscription.updated' => 'updated',
+            'subscription.canceled' => 'deleted',
+            'subscription.paused' => 'deleted',
+            'subscription.past_due' => 'payment_failed',
+            'subscription.trialing' => 'trial_ending',
+        ];
+
+        return $eventMap[$eventType] ?? $eventType;
     }
 
     public function validate(string $payload, array $headers): array

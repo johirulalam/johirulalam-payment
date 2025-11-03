@@ -453,3 +453,329 @@ return view('invoice', [
 ]);
 ```
 
+---
+
+## Event-Driven Architecture
+
+The package provides an event-driven architecture that allows you to easily handle payment events by creating custom event classes.
+
+### How It Works
+
+When a webhook is received:
+1. The package validates and transforms the webhook data
+2. It dispatches events based on the event type (invoice, checkout, subscription)
+3. Your custom event classes are automatically instantiated and their `handle()` method is called
+4. You can also listen to these events using Laravel's event listener system
+
+### Step 1: Create Your Event Classes
+
+Create event classes in `app/Events` by extending the base event classes provided by the package:
+
+#### Invoice Events
+
+```php
+<?php
+
+namespace App\Events;
+
+use Sayed\Payment\Events\InvoiceEvent;
+use App\Models\Invoice;
+use Illuminate\Support\Facades\Log;
+
+class InvoicePaymentSucceeded extends InvoiceEvent
+{
+    public function getEventName(): string
+    {
+        return 'invoice.payment_succeeded';
+    }
+
+    public function handle(): void
+    {
+        Log::info('Invoice paid', ['invoice_id' => $this->invoiceId]);
+
+        // Update your database
+        Invoice::where('payment_invoice_id', $this->invoiceId)->update([
+            'status' => 'paid',
+            'paid_at' => now(),
+        ]);
+
+        // Your business logic here
+        // - Grant access to product
+        // - Send confirmation email
+        // - Trigger fulfillment process
+    }
+}
+```
+
+#### Checkout Events
+
+```php
+<?php
+
+namespace App\Events;
+
+use Sayed\Payment\Events\CheckoutEvent;
+use App\Models\Order;
+
+class CheckoutCompleted extends CheckoutEvent
+{
+    public function getEventName(): string
+    {
+        return 'checkout.completed';
+    }
+
+    public function handle(): void
+    {
+        // Get order from metadata
+        $orderId = $this->metadata['order_id'] ?? null;
+        
+        if ($orderId) {
+            Order::find($orderId)->update([
+                'status' => 'paid',
+                'transaction_id' => $this->transactionId,
+                'paid_at' => now(),
+            ]);
+        }
+    }
+}
+```
+
+#### Subscription Events
+
+```php
+<?php
+
+namespace App\Events;
+
+use Sayed\Payment\Events\SubscriptionEvent;
+use App\Models\Subscription;
+
+class SubscriptionCreated extends SubscriptionEvent
+{
+    public function getEventName(): string
+    {
+        return 'subscription.created';
+    }
+
+    public function handle(): void
+    {
+        Subscription::create([
+            'payment_subscription_id' => $this->subscriptionId,
+            'customer_id' => $this->customerId,
+            'plan_id' => $this->planId,
+            'status' => $this->status,
+            'amount' => $this->amount,
+            'currency' => $this->currency,
+        ]);
+    }
+}
+```
+
+### Step 2: Register Events in Config
+
+Update `config/payment.php` to map webhook events to your custom classes:
+
+```php
+return [
+    // ... other config
+
+    'events' => [
+        'invoice' => [
+            'payment_succeeded' => \App\Events\InvoicePaymentSucceeded::class,
+            'payment_failed' => \App\Events\InvoicePaymentFailed::class,
+            'finalized' => \App\Events\InvoiceFinalized::class,
+            'updated' => \App\Events\InvoiceUpdated::class,
+        ],
+        'checkout' => [
+            'completed' => \App\Events\CheckoutCompleted::class,
+            'expired' => \App\Events\CheckoutExpired::class,
+        ],
+        'subscription' => [
+            'created' => \App\Events\SubscriptionCreated::class,
+            'updated' => \App\Events\SubscriptionUpdated::class,
+            'deleted' => \App\Events\SubscriptionDeleted::class,
+            'trial_ending' => \App\Events\SubscriptionTrialEnding::class,
+        ],
+    ],
+];
+```
+
+### Step 3: Access Event Data
+
+Your event classes have access to the following properties:
+
+#### InvoiceEvent Properties
+
+```php
+$this->provider;          // 'stripe', 'paypal', or 'paddle'
+$this->invoiceId;         // Provider's invoice ID
+$this->status;            // Invoice status
+$this->amount;            // Amount in cents (integer)
+$this->currency;          // Currency code (e.g., 'usd')
+$this->customerId;        // Customer ID (if available)
+$this->subscriptionId;    // Subscription ID (if applicable)
+$this->metadata;          // Custom metadata array
+$this->rawPayload;        // Original webhook payload (JSON string)
+```
+
+#### CheckoutEvent Properties
+
+```php
+$this->provider;          // Payment provider
+$this->transactionId;     // Transaction/session ID
+$this->status;            // Payment status
+$this->amount;            // Amount in cents (integer)
+$this->currency;          // Currency code
+$this->customerId;        // Customer ID (if available)
+$this->customerEmail;     // Customer email (if available)
+$this->metadata;          // Custom metadata array
+$this->rawPayload;        // Original webhook payload (JSON string)
+```
+
+#### SubscriptionEvent Properties
+
+```php
+$this->provider;              // Payment provider
+$this->subscriptionId;        // Subscription ID
+$this->status;                // Subscription status
+$this->amount;                // Amount in cents (integer, nullable)
+$this->currency;              // Currency code (nullable)
+$this->customerId;            // Customer ID (if available)
+$this->customerEmail;         // Customer email (if available)
+$this->planId;                // Plan/price ID (if available)
+$this->currentPeriodStart;    // Period start date (nullable)
+$this->currentPeriodEnd;      // Period end date (nullable)
+$this->metadata;              // Custom metadata array
+$this->rawPayload;            // Original webhook payload (JSON string)
+```
+
+### Step 4: Using Laravel's Event System (Optional)
+
+You can also use Laravel's native event listeners:
+
+**Create a Listener:**
+
+```bash
+php artisan make:listener SendInvoicePaidNotification
+```
+
+**Register in EventServiceProvider:**
+
+```php
+use App\Events\InvoicePaymentSucceeded;
+use App\Listeners\SendInvoicePaidNotification;
+
+protected $listen = [
+    InvoicePaymentSucceeded::class => [
+        SendInvoicePaidNotification::class,
+    ],
+];
+```
+
+**Listener Example:**
+
+```php
+<?php
+
+namespace App\Listeners;
+
+use App\Events\InvoicePaymentSucceeded;
+use Illuminate\Support\Facades\Mail;
+
+class SendInvoicePaidNotification
+{
+    public function handle(InvoicePaymentSucceeded $event)
+    {
+        // Send email notification
+        Mail::to($event->customerEmail)->send(
+            new InvoicePaidMail($event->invoiceId, $event->amount)
+        );
+    }
+}
+```
+
+### Available Event Names
+
+#### Stripe Event Mapping
+
+| Stripe Event | Simplified Name | Event Type |
+|-------------|-----------------|------------|
+| `checkout.session.completed` | `completed` | checkout |
+| `checkout.session.expired` | `expired` | checkout |
+| `customer.subscription.created` | `created` | subscription |
+| `customer.subscription.updated` | `updated` | subscription |
+| `customer.subscription.deleted` | `deleted` | subscription |
+| `customer.subscription.trial_will_end` | `trial_ending` | subscription |
+| `invoice.created` | `created` | invoice |
+| `invoice.finalized` | `finalized` | invoice |
+| `invoice.paid` | `payment_succeeded` | invoice |
+| `invoice.payment_failed` | `payment_failed` | invoice |
+| `invoice.updated` | `updated` | invoice |
+
+### Real-World Example
+
+Here's a complete example of handling invoice payments:
+
+```php
+<?php
+
+namespace App\Events;
+
+use Sayed\Payment\Events\InvoiceEvent;
+use App\Models\Invoice;
+use App\Models\User;
+use App\Jobs\SendInvoiceReceiptJob;
+use App\Jobs\GrantProductAccessJob;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+
+class InvoicePaymentSucceeded extends InvoiceEvent
+{
+    public function getEventName(): string
+    {
+        return 'invoice.payment_succeeded';
+    }
+
+    public function handle(): void
+    {
+        DB::transaction(function () {
+            // 1. Update invoice in database
+            $invoice = Invoice::where('payment_invoice_id', $this->invoiceId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$invoice) {
+                Log::error('Invoice not found', ['invoice_id' => $this->invoiceId]);
+                return;
+            }
+
+            $invoice->update([
+                'status' => 'paid',
+                'paid_at' => now(),
+                'payment_provider' => $this->provider,
+                'payment_data' => $this->metadata,
+            ]);
+
+            // 2. Get user
+            $user = $invoice->user;
+
+            // 3. Grant access to product/service
+            if ($invoice->product_id) {
+                GrantProductAccessJob::dispatch($user, $invoice->product_id);
+            }
+
+            // 4. Send receipt email
+            SendInvoiceReceiptJob::dispatch($user, $invoice);
+
+            // 5. Log for analytics
+            Log::info('Invoice payment processed successfully', [
+                'invoice_id' => $this->invoiceId,
+                'user_id' => $user->id,
+                'amount' => $this->amount,
+                'provider' => $this->provider,
+            ]);
+        });
+    }
+}
+```
+

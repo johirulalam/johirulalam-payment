@@ -1,166 +1,781 @@
-# Sayed Payment Laravel Package
+# User Guide - How to Use This Package in Your Laravel Application
 
-A comprehensive Laravel payment integration package supporting multiple payment providers including Stripe, PayPal, and Paddle.
+This guide provides step-by-step instructions for integrating the Sayed Payment Laravel package into your application.
 
-## 🎯 Overview
+## Table of Contents
 
-This package is a complete Laravel port of the `sayed-payment` Node.js package, providing a unified interface for integrating multiple payment gateways into your Laravel application.
+1. [Installation](#installation)
+2. [Configuration](#configuration)
+3. [Basic Setup](#basic-setup)
+4. [Creating Payments](#creating-payments)
+5. [Handling Webhooks](#handling-webhooks)
+6. [Advanced Features](#advanced-features)
 
-## ✨ Features
+---
 
-- 🚀 Easy integration with Laravel applications
-- 💳 Multiple payment providers (Stripe, PayPal, Paddle)
-- 🔄 Factory pattern for flexible provider switching
-- 🎯 Webhook handling with automatic provider detection
-- 🔒 Secure signature verification
-- 📦 Service Provider with auto-discovery
-- ⚙️ Configurable via Laravel config files
-- 🏗️ Extensible architecture for custom providers
+## Installation
 
-## 📋 Requirements
+### Step 1: Install the Package
 
-- PHP >= 8.0
-- Laravel >= 9.0
-
-## �� Installation
+Install via Composer:
 
 ```bash
 composer require sayed/payment-laravel
 ```
 
-### Publish Configuration
+### Step 2: Publish Configuration
+
+Publish the configuration file:
 
 ```bash
 php artisan vendor:publish --tag=payment-config
 ```
 
-### Environment Setup
+This creates `config/payment.php` in your application.
 
-Add to your `.env`:
+---
+
+## Configuration
+
+### Step 3: Add Environment Variables
+
+Add your payment provider credentials to `.env`:
 
 ```env
+# Choose your default provider
 PAYMENT_PROVIDER=stripe
 
-STRIPE_SECRET_KEY=sk_test_xxxxx
-STRIPE_WEBHOOK_SECRET=whsec_xxxxx
+# Stripe Configuration
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
 
-PAYPAL_CLIENT_ID=xxxxx
-PAYPAL_CLIENT_SECRET=xxxxx
+# PayPal Configuration
+PAYPAL_CLIENT_ID=
+PAYPAL_CLIENT_SECRET=
 PAYPAL_MODE=sandbox
 
-PADDLE_VENDOR_ID=xxxxx
-PADDLE_VENDOR_AUTH_CODE=xxxxx
-PADDLE_ENVIRONMENT=sandbox
+# Paddle Configuration
+PADDLE_VENDOR_ID=
+PADDLE_VENDOR_AUTH_CODE=
+PADDLE_PUBLIC_KEY=
+PADDLE_ENVIRONMENT=
 ```
 
-## 🚀 Quick Start
+### Step 4: Verify Configuration
 
-### Create a Payment Checkout
+Check `config/payment.php` to ensure providers are configured:
+
+---
+
+## Basic Setup
+
+### Step 5: Create Payment Controller
+
+Create a controller to handle payments:
+
+```bash
+php artisan make:controller PaymentController
+```
+
+**app/Http/Controllers/PaymentController.php:**
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Sayed\Payment\Facades\Payment;
+use Exception;
+
+class PaymentController extends Controller
+{
+    /**
+     * Create payment checkout session
+     */
+    public function createCheckout(Request $request)
+    {
+        try {
+            $result = Payment::driver('stripe')->checkout([
+                'currency' => 'usd',
+                'amount' => 2000, // $20.00 in cents
+                'products' => [
+                    [
+                        'title' => 'Premium Plan',
+                        'amount' => 2000,
+                        'quantity' => 1,
+                    ]
+                ],
+                'is_subscription' => false,
+                'success_url' => route('payment.success'),
+                'cancel_url' => route('payment.cancel'),
+                'metadata' => [
+                    'user_id' => auth()->id(),
+                    'order_id' => 'ORD-' . time(),
+                ],
+            ]);
+
+            return redirect($result['paymentLinkUrl']);
+        } catch (Exception $e) {
+            return back()->with('error', 'Payment failed: ' . $e->getMessage());
+        }
+    }
+
+}
+```
+
+
+
+### One-Time Payment
 
 ```php
 use Sayed\Payment\Facades\Payment;
 
-$adapter = Payment::createAdapter('stripe');
-
-$result = $adapter->checkout([
-    'has_price_id' => false,
-    'currency' => 'usd',
-    'amount' => 2000, // $20.00 in cents
-    'product' => ['title' => 'Premium Plan'],
-    'quantity' => 1,
+$result = Payment::driver('stripe')->checkout([
+    'products' => [
+        [
+            'title' => 'Product Name',
+            'amount' => 5000,
+            'quantity' => 1,
+        ]
+    ],
     'is_subscription' => false,
     'success_url' => route('payment.success'),
     'cancel_url' => route('payment.cancel'),
 ]);
 
+// Redirect user to payment page
 return redirect($result['paymentLinkUrl']);
 ```
 
-### Handle Webhooks
+### Subscription Payment
 
 ```php
-use Sayed\Payment\Factory\WebhookFactory;
-
-public function handleWebhook(Request $request)
-{
-    $payload = $request->getContent();
-    $headers = collect($request->headers->all())
-        ->map(fn($v) => is_array($v) ? $v[0] : $v)
-        ->toArray();
-    
-    $handler = WebhookFactory::createAdapter($headers);
-    $result = $handler->process($payload, $headers);
-    
-    // Process $result...
-    
-    return response()->json(['received' => true]);
-}
+$result = Payment::driver('stripe')->checkout([
+    'currency' => 'usd',
+    'amount' => 2999, // $29.99
+    'products' => [
+        [
+            'title' => 'Monthly Subscription',
+            'amount' => 2999,
+            'quantity' => 1,
+        ]
+    ],
+    'is_subscription' => true,
+    'interval' => 'month', // day, week, month, year
+    'success_url' => route('subscription.success'),
+    'cancel_url' => route('subscription.cancel'),
+]);
 ```
 
-## 📚 Documentation
-
-### Supported Providers
-
-- **Stripe**: Full checkout, subscriptions, and refunds
-- **PayPal**: Order creation and payment processing
-- **Paddle**: Payment links and subscriptions
-
-### API Routes
-
-```
-POST /api/payment/checkout/{provider}
-POST /api/payment/refund/{provider}
-POST /api/webhooks/handle
-```
-
-### Adding Custom Providers
+### Multiple Products
 
 ```php
-use Sayed\Payment\Registry\PaymentRegistry;
-
-$registry = app(PaymentRegistry::class);
-$registry->registerProvider('custom', CustomProcessor::class);
+$result = Payment::driver('stripe')->checkout([
+    'currency' => 'usd',
+    'products' => [
+        [
+            'title' => 'Product 1',
+            'amount' => 1000,
+            'quantity' => 2,
+        ],
+        [
+            'title' => 'Product 2',
+            'amount' => 1500,
+            'quantity' => 1,
+        ],
+    ],
+    'is_subscription' => false,
+    'success_url' => route('payment.success'),
+    'cancel_url' => route('payment.cancel'),
+]);
 ```
 
-## 🏗️ Architecture
+### Invoice Payment (Stripe Only)
+
+```php
+// Step 3: Create and pay invoice
+$invoice = Payment::driver('stripe')->payWithInvoice([
+    'customer_id' => $customer['customer_id'],
+    'payment_method_id' => $request->payment_method_id,
+    'currency' => 'usd',
+    'items' => [
+        [
+            'description' => 'Service Fee',
+            'amount' => 5000,
+            'quantity' => 1,
+        ],
+    ],
+]);
+
+return response()->json([
+    'success' => true,
+    'invoice_pdf' => $invoice['invoice_pdf'],
+]);
+```
+
+### Refund Payment
+
+```php
+$refund = Payment::driver('stripe')->refundPayment(
+    transactionId: 'ch_xxxxx',
+    amount: 1000 // $10.00
+);
 
 ```
-sayed-payment-laravel/
-├── config/payment.php
-├── src/
-│   ├── PaymentServiceProvider.php
-│   ├── Facades/
-│   ├── Factory/
-│   ├── Registry/
-│   ├── Services/
-│   ├── Drivers/
-│   │   ├── Stripe/
-│   │   ├── PayPal/
-│   │   └── Paddle/
-│   └── Http/
-└── routes/payment.php
-```
-
-## 🔒 Security
-
-- Webhook signature verification
-- Environment-based credentials
-- HTTPS enforcement recommended
-- CSRF protection configuration
-
-## 📄 License
-
-Apache License 2.0
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## 📧 Support
-
-For issues and questions, please open an issue on GitHub.
 
 ---
 
-**Note**: This package has been created with all necessary files. The complete implementation includes 30+ PHP classes following Laravel best practices and PSR-4 standards.
+## Handling Webhooks
+
+### Step 8: Create Webhook Controller
+
+```bash
+php artisan make:controller WebhookController
+```
+
+**app/Http/Controllers/WebhookController.php:**
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Sayed\Payment\Facades\Webhook;
+use App\Models\Order;
+use App\Models\Subscription;
+use Exception;
+
+class WebhookController extends Controller
+{
+    /**
+     * Handle incoming webhooks
+     */
+    public function handle(Request $request, string $provider)
+    {
+        $payload = $request->getContent();
+        $headers = collect($request->headers->all())
+            ->map(fn($v) => is_array($v) ? $v[0] : $v)
+            ->toArray();
+
+        try {
+            $event = Webhook::process($provider, $payload, $headers);
+            
+            // Log webhook
+            \Log::info('Webhook received', [
+                'provider' => $provider,
+                'event_type' => $event['event_type'],
+            ]);
+
+            // Handle different event types
+            $this->handleEvent($event);
+
+            return response()->json(['received' => true], 200);
+        } catch (Exception $e) {
+            \Log::error('Webhook error: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], 400);
+        }
+    }
+
+    /**
+     * Handle specific event types
+     */
+    protected function handleEvent(array $event)
+    {
+        $eventType = $event['event_type'];
+
+        // Checkout/Payment completed
+        if (str_contains($eventType, 'checkout') || str_contains($eventType, 'payment')) {
+            $this->handlePaymentCompleted($event);
+        }
+
+        // Subscription events
+        if (str_contains($eventType, 'subscription')) {
+            $this->handleSubscriptionEvent($event);
+        }
+
+        // Invoice events
+        if (str_contains($eventType, 'invoice')) {
+            $this->handleInvoiceEvent($event);
+        }
+    }
+
+    /**
+     * Handle payment completed
+     */
+    protected function handlePaymentCompleted(array $event)
+    {
+        // Find order by metadata
+        $metadata = $event['metadata'] ?? [];
+        
+        if (isset($metadata['order_id'])) {
+            $order = Order::where('order_id', $metadata['order_id'])->first();
+            
+            if ($order) {
+                $order->update([
+                    'status' => 'paid',
+                    'payment_id' => $event['id'],
+                    'amount_paid' => $event['amount'],
+                    'paid_at' => now(),
+                ]);
+
+                // Send confirmation email
+                // Mail::to($order->user)->send(new PaymentConfirmation($order));
+            }
+        }
+    }
+
+    /**
+     * Handle subscription events
+     */
+    protected function handleSubscriptionEvent(array $event)
+    {
+        $status = $event['status'];
+        $subscriptionId = $event['subscription_id'];
+
+        $subscription = Subscription::where('provider_subscription_id', $subscriptionId)
+            ->first();
+
+        if ($subscription) {
+            $subscription->update([
+                'status' => $status,
+                'current_period_end' => $event['current_period_end'] ?? null,
+            ]);
+
+            // Handle cancellation
+            if ($status === 'canceled' || $status === 'cancelled') {
+                // Notify user
+                // Disable features
+            }
+        }
+    }
+
+    /**
+     * Handle invoice events
+     */
+    protected function handleInvoiceEvent(array $event)
+    {
+        if ($event['paid']) {
+            // Invoice was paid successfully
+            \Log::info('Invoice paid', [
+                'invoice_id' => $event['id'],
+                'amount' => $event['amount_paid'],
+            ]);
+        } else {
+            // Payment failed
+            \Log::warning('Invoice payment failed', [
+                'invoice_id' => $event['id'],
+            ]);
+        }
+    }
+}
+```
+
+### Step 9: Add Webhook Routes
+
+Add to `routes/api.php`:
+
+```php
+use App\Http\Controllers\WebhookController;
+
+Route::post('/webhooks/payment/{provider}', [WebhookController::class, 'handle'])
+    ->name('webhooks.payment');
+```
+
+### Step 10: Disable CSRF for Webhooks
+
+The package already includes middleware, but verify in `app/Http/Middleware/VerifyCsrfToken.php`:
+
+```php
+protected $except = [
+    'webhooks/*',
+];
+```
+
+Or the package middleware is automatically applied via the service provider.
+
+### Step 11: Register Webhook URLs
+
+Register webhook URLs with your payment providers:
+
+**Stripe:**
+- URL: `https://yourdomain.com/api/webhooks/payment/stripe`
+- Events: `checkout.session.completed`, `customer.subscription.*`, `invoice.*`
+
+**PayPal:**
+- URL: `https://yourdomain.com/api/webhooks/payment/paypal`
+- Events: `PAYMENT.CAPTURE.COMPLETED`, `BILLING.SUBSCRIPTION.*`
+
+**Paddle:**
+- URL: `https://yourdomain.com/api/webhooks/payment/paddle`
+- Events: `transaction.completed`, `subscription.*`
+
+---
+
+## Advanced Features
+
+### Dynamic Provider Selection
+
+```php
+// Use default provider from config
+$payment = Payment::driver();
+
+// Use specific provider
+$stripePayment = Payment::driver('stripe');
+$paypalPayment = Payment::driver('paypal');
+$paddlePayment = Payment::driver('paddle');
+```
+
+### Custom Metadata
+
+```php
+Payment::driver('stripe')->checkout([
+    // ... other fields
+    'metadata' => [
+        'user_id' => auth()->id(),
+        'order_id' => $order->id,
+        'plan' => 'premium',
+        'source' => 'web',
+    ],
+]);
+```
+
+### Get Invoice Details (Stripe)
+
+```php
+$invoice = Payment::driver('stripe')->getInvoice('in_xxxxx');
+
+return view('invoice', [
+    'invoice_pdf' => $invoice['invoice_pdf'],
+    'amount' => $invoice['amount_paid'],
+    'status' => $invoice['status'],
+]);
+```
+
+---
+
+## Event-Driven Architecture
+
+The package provides an event-driven architecture that allows you to easily handle payment events by creating custom event classes.
+
+### How It Works
+
+When a webhook is received:
+1. The package validates and transforms the webhook data
+2. It dispatches events based on the event type (invoice, checkout, subscription)
+3. Your custom event classes are automatically instantiated and their `handle()` method is called
+4. You can also listen to these events using Laravel's event listener system
+
+### Step 1: Create Your Event Classes
+
+Create event classes in `app/Events` by extending the base event classes provided by the package:
+
+#### Invoice Events
+
+```php
+<?php
+
+namespace App\Events;
+
+use Sayed\Payment\Events\InvoiceEvent;
+use App\Models\Invoice;
+use Illuminate\Support\Facades\Log;
+
+class InvoicePaymentSucceeded extends InvoiceEvent
+{
+    public function getEventName(): string
+    {
+        return 'invoice.payment_succeeded';
+    }
+
+    public function handle(): void
+    {
+        Log::info('Invoice paid', ['invoice_id' => $this->invoiceId]);
+
+        // Update your database
+        Invoice::where('payment_invoice_id', $this->invoiceId)->update([
+            'status' => 'paid',
+            'paid_at' => now(),
+        ]);
+
+        // Your business logic here
+        // - Grant access to product
+        // - Send confirmation email
+        // - Trigger fulfillment process
+    }
+}
+```
+
+#### Checkout Events
+
+```php
+<?php
+
+namespace App\Events;
+
+use Sayed\Payment\Events\CheckoutEvent;
+use App\Models\Order;
+
+class CheckoutCompleted extends CheckoutEvent
+{
+    public function getEventName(): string
+    {
+        return 'checkout.completed';
+    }
+
+    public function handle(): void
+    {
+        // Get order from metadata
+        $orderId = $this->metadata['order_id'] ?? null;
+        
+        if ($orderId) {
+            Order::find($orderId)->update([
+                'status' => 'paid',
+                'transaction_id' => $this->transactionId,
+                'paid_at' => now(),
+            ]);
+        }
+    }
+}
+```
+
+#### Subscription Events
+
+```php
+<?php
+
+namespace App\Events;
+
+use Sayed\Payment\Events\SubscriptionEvent;
+use App\Models\Subscription;
+
+class SubscriptionCreated extends SubscriptionEvent
+{
+    public function getEventName(): string
+    {
+        return 'subscription.created';
+    }
+
+    public function handle(): void
+    {
+        Subscription::create([
+            'payment_subscription_id' => $this->subscriptionId,
+            'customer_id' => $this->customerId,
+            'plan_id' => $this->planId,
+            'status' => $this->status,
+            'amount' => $this->amount,
+            'currency' => $this->currency,
+        ]);
+    }
+}
+```
+
+### Step 2: Register Events in Config
+
+Update `config/payment.php` to map webhook events to your custom classes:
+
+```php
+return [
+    // ... other config
+
+    'events' => [
+        'invoice' => [
+            'payment_succeeded' => \App\Events\InvoicePaymentSucceeded::class,
+            'payment_failed' => \App\Events\InvoicePaymentFailed::class,
+            'finalized' => \App\Events\InvoiceFinalized::class,
+            'updated' => \App\Events\InvoiceUpdated::class,
+        ],
+        'checkout' => [
+            'completed' => \App\Events\CheckoutCompleted::class,
+            'expired' => \App\Events\CheckoutExpired::class,
+        ],
+        'subscription' => [
+            'created' => \App\Events\SubscriptionCreated::class,
+            'updated' => \App\Events\SubscriptionUpdated::class,
+            'deleted' => \App\Events\SubscriptionDeleted::class,
+            'trial_ending' => \App\Events\SubscriptionTrialEnding::class,
+        ],
+    ],
+];
+```
+
+### Step 3: Access Event Data
+
+Your event classes have access to the following properties:
+
+#### InvoiceEvent Properties
+
+```php
+$this->provider;          // 'stripe', 'paypal', or 'paddle'
+$this->invoiceId;         // Provider's invoice ID
+$this->status;            // Invoice status
+$this->amount;            // Amount in cents (integer)
+$this->currency;          // Currency code (e.g., 'usd')
+$this->customerId;        // Customer ID (if available)
+$this->subscriptionId;    // Subscription ID (if applicable)
+$this->metadata;          // Custom metadata array
+$this->rawPayload;        // Original webhook payload (JSON string)
+```
+
+#### CheckoutEvent Properties
+
+```php
+$this->provider;          // Payment provider
+$this->transactionId;     // Transaction/session ID
+$this->status;            // Payment status
+$this->amount;            // Amount in cents (integer)
+$this->currency;          // Currency code
+$this->customerId;        // Customer ID (if available)
+$this->customerEmail;     // Customer email (if available)
+$this->metadata;          // Custom metadata array
+$this->rawPayload;        // Original webhook payload (JSON string)
+```
+
+#### SubscriptionEvent Properties
+
+```php
+$this->provider;              // Payment provider
+$this->subscriptionId;        // Subscription ID
+$this->status;                // Subscription status
+$this->amount;                // Amount in cents (integer, nullable)
+$this->currency;              // Currency code (nullable)
+$this->customerId;            // Customer ID (if available)
+$this->customerEmail;         // Customer email (if available)
+$this->planId;                // Plan/price ID (if available)
+$this->currentPeriodStart;    // Period start date (nullable)
+$this->currentPeriodEnd;      // Period end date (nullable)
+$this->metadata;              // Custom metadata array
+$this->rawPayload;            // Original webhook payload (JSON string)
+```
+
+### Step 4: Using Laravel's Event System (Optional)
+
+You can also use Laravel's native event listeners:
+
+**Create a Listener:**
+
+```bash
+php artisan make:listener SendInvoicePaidNotification
+```
+
+**Register in EventServiceProvider:**
+
+```php
+use App\Events\InvoicePaymentSucceeded;
+use App\Listeners\SendInvoicePaidNotification;
+
+protected $listen = [
+    InvoicePaymentSucceeded::class => [
+        SendInvoicePaidNotification::class,
+    ],
+];
+```
+
+**Listener Example:**
+
+```php
+<?php
+
+namespace App\Listeners;
+
+use App\Events\InvoicePaymentSucceeded;
+use Illuminate\Support\Facades\Mail;
+
+class SendInvoicePaidNotification
+{
+    public function handle(InvoicePaymentSucceeded $event)
+    {
+        // Send email notification
+        Mail::to($event->customerEmail)->send(
+            new InvoicePaidMail($event->invoiceId, $event->amount)
+        );
+    }
+}
+```
+
+### Available Event Names
+
+#### Stripe Event Mapping
+
+| Stripe Event | Simplified Name | Event Type |
+|-------------|-----------------|------------|
+| `checkout.session.completed` | `completed` | checkout |
+| `checkout.session.expired` | `expired` | checkout |
+| `customer.subscription.created` | `created` | subscription |
+| `customer.subscription.updated` | `updated` | subscription |
+| `customer.subscription.deleted` | `deleted` | subscription |
+| `customer.subscription.trial_will_end` | `trial_ending` | subscription |
+| `invoice.created` | `created` | invoice |
+| `invoice.finalized` | `finalized` | invoice |
+| `invoice.paid` | `payment_succeeded` | invoice |
+| `invoice.payment_failed` | `payment_failed` | invoice |
+| `invoice.updated` | `updated` | invoice |
+
+### Real-World Example
+
+Here's a complete example of handling invoice payments:
+
+```php
+<?php
+
+namespace App\Events;
+
+use Sayed\Payment\Events\InvoiceEvent;
+use App\Models\Invoice;
+use App\Models\User;
+use App\Jobs\SendInvoiceReceiptJob;
+use App\Jobs\GrantProductAccessJob;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+
+class InvoicePaymentSucceeded extends InvoiceEvent
+{
+    public function getEventName(): string
+    {
+        return 'invoice.payment_succeeded';
+    }
+
+    public function handle(): void
+    {
+        DB::transaction(function () {
+            // 1. Update invoice in database
+            $invoice = Invoice::where('payment_invoice_id', $this->invoiceId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$invoice) {
+                Log::error('Invoice not found', ['invoice_id' => $this->invoiceId]);
+                return;
+            }
+
+            $invoice->update([
+                'status' => 'paid',
+                'paid_at' => now(),
+                'payment_provider' => $this->provider,
+                'payment_data' => $this->metadata,
+            ]);
+
+            // 2. Get user
+            $user = $invoice->user;
+
+            // 3. Grant access to product/service
+            if ($invoice->product_id) {
+                GrantProductAccessJob::dispatch($user, $invoice->product_id);
+            }
+
+            // 4. Send receipt email
+            SendInvoiceReceiptJob::dispatch($user, $invoice);
+
+            // 5. Log for analytics
+            Log::info('Invoice payment processed successfully', [
+                'invoice_id' => $this->invoiceId,
+                'user_id' => $user->id,
+                'amount' => $this->amount,
+                'provider' => $this->provider,
+            ]);
+        });
+    }
+}
+```
 

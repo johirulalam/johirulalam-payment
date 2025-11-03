@@ -3,6 +3,7 @@
 namespace Sayed\Payment\Drivers\PayPal\Webhooks;
 
 use Sayed\Payment\Services\Webhooks\WebhookProcessor;
+use Sayed\Payment\Services\Events\EventDispatcher;
 use Sayed\Payment\DTOs\Webhooks\CheckoutEventDTO;
 use Sayed\Payment\DTOs\Webhooks\SubscriptionEventDTO;
 use Sayed\Payment\DTOs\Webhooks\InvoiceEventDTO;
@@ -23,10 +24,55 @@ class PayPalHandler extends WebhookProcessor
             $eventType = $data['event_type'] ?? '';
             $dto = $this->transform($data, $eventType);
 
+            // Dispatch event to user-defined listeners
+            $this->dispatchEvent($dto, $eventType, $payload);
+
             return $dto->toArray();
         } catch (Exception $e) {
             throw new Exception('Error processing PayPal webhook: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Dispatch event to user-defined listeners
+     */
+    protected function dispatchEvent($dto, string $eventType, string $rawPayload): void
+    {
+        $dispatcher = new EventDispatcher();
+        $eventName = $this->getEventName($eventType);
+
+        if ($dto instanceof InvoiceEventDTO) {
+            $dispatcher->dispatchInvoice($dto, 'paypal', $eventName, $rawPayload);
+        } elseif ($dto instanceof CheckoutEventDTO) {
+            $dispatcher->dispatchCheckout($dto, 'paypal', $eventName, $rawPayload);
+        } elseif ($dto instanceof SubscriptionEventDTO) {
+            $dispatcher->dispatchSubscription($dto, 'paypal', $eventName, $rawPayload);
+        }
+    }
+
+    /**
+     * Get simplified event name from PayPal event type
+     */
+    protected function getEventName(string $eventType): string
+    {
+        // Convert PayPal event types to simplified names
+        $eventMap = [
+            'CHECKOUT.ORDER.COMPLETED' => 'completed',
+            'CHECKOUT.ORDER.APPROVED' => 'completed',
+            'PAYMENT.CAPTURE.COMPLETED' => 'completed',
+            'PAYMENT.CAPTURE.DENIED' => 'expired',
+            'BILLING.SUBSCRIPTION.CREATED' => 'created',
+            'BILLING.SUBSCRIPTION.UPDATED' => 'updated',
+            'BILLING.SUBSCRIPTION.CANCELLED' => 'deleted',
+            'BILLING.SUBSCRIPTION.SUSPENDED' => 'deleted',
+            'BILLING.SUBSCRIPTION.EXPIRED' => 'deleted',
+            'INVOICING.INVOICE.PAID' => 'payment_succeeded',
+            'INVOICING.INVOICE.CANCELLED' => 'payment_failed',
+            'INVOICING.INVOICE.CREATED' => 'created',
+            'INVOICING.INVOICE.UPDATED' => 'updated',
+        ];
+
+        return $eventMap[$eventType] ?? $eventType;
     }
 
     public function validate(string $payload, array $headers): array

@@ -3,6 +3,7 @@
 namespace Sayed\Payment\Drivers\Stripe\Webhooks;
 
 use Sayed\Payment\Services\Webhooks\WebhookProcessor;
+use Sayed\Payment\Services\Events\EventDispatcher;
 use Sayed\Payment\DTOs\Webhooks\CheckoutEventDTO;
 use Sayed\Payment\DTOs\Webhooks\SubscriptionEventDTO;
 use Sayed\Payment\DTOs\Webhooks\InvoiceEventDTO;
@@ -36,10 +37,53 @@ class StripeHandler extends WebhookProcessor
             $eventType = $validationResult['event']->type ?? '';
             $dto = $this->transform($validationResult['data'], $eventType);
 
+            // Dispatch event to user-defined listeners
+            $this->dispatchEvent($dto, $eventType, $payload);
+
             return $dto->toArray();
         } catch (Exception $e) {
             throw new Exception('Error processing webhook: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Dispatch event to user-defined listeners
+     */
+    protected function dispatchEvent($dto, string $eventType, string $rawPayload): void
+    {
+        $dispatcher = new EventDispatcher();
+        $eventName = $this->getEventName($eventType);
+
+        if ($dto instanceof InvoiceEventDTO) {
+            $dispatcher->dispatchInvoice($dto, 'stripe', $eventName, $rawPayload);
+        } elseif ($dto instanceof CheckoutEventDTO) {
+            $dispatcher->dispatchCheckout($dto, 'stripe', $eventName, $rawPayload);
+        } elseif ($dto instanceof SubscriptionEventDTO) {
+            $dispatcher->dispatchSubscription($dto, 'stripe', $eventName, $rawPayload);
+        }
+    }
+
+    /**
+     * Get simplified event name from Stripe event type
+     */
+    protected function getEventName(string $eventType): string
+    {
+        // Convert stripe event types to simplified names
+        $eventMap = [
+            'checkout.session.completed' => 'completed',
+            'checkout.session.expired' => 'expired',
+            'customer.subscription.created' => 'created',
+            'customer.subscription.updated' => 'updated',
+            'customer.subscription.deleted' => 'deleted',
+            'customer.subscription.trial_will_end' => 'trial_ending',
+            'invoice.created' => 'created',
+            'invoice.finalized' => 'finalized',
+            'invoice.paid' => 'payment_succeeded',
+            'invoice.payment_failed' => 'payment_failed',
+            'invoice.updated' => 'updated',
+        ];
+
+        return $eventMap[$eventType] ?? $eventType;
     }
 
     public function validate(string $payload, array $headers): array
