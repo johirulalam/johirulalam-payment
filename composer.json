@@ -1,6 +1,6 @@
 {
     "name": "sayed/payment-laravel",
-    "description": "A Laravel payment integration package with Stripe, PayPal, and Paddle support",
+    "description": "A comprehensive Laravel payment integration package supporting Stripe, PayPal, and Paddle with unified interface, webhooks, and invoice payments",
     "type": "library",
     "keywords": [
         "laravel",
@@ -8,13 +8,18 @@
         "stripe",
         "paypal",
         "paddle",
-        "integration"
+        "integration",
+        "webhook",
+        "subscription",
+        "invoice"
     ],
-    "license": "Apache-2.0",
+    "license": "MIT",
+    "homepage": "https://github.com/johirulalam/payment",
     "authors": [
         {
-            "name": "Your Name",
-            "email": "your.email@example.com"
+            "name": "Johirul Alam",
+            "email": "johirulalam@example.com",
+            "role": "Developer"
         }
     ],
     "require": {
@@ -33,6 +38,11 @@
             "src/helpers.php"
         ]
     },
+    "autoload-dev": {
+        "psr-4": {
+            "Sayed\\Payment\\Tests\\": "tests/"
+        }
+    },
     "extra": {
         "laravel": {
             "providers": [
@@ -43,6 +53,13 @@
                 "Webhook": "Sayed\\Payment\\Facades\\Webhook"
             }
         }
+    },
+    "scripts": {
+        "test": "echo 'No tests configured yet'"
+    },
+    "config": {
+        "sort-packages": true,
+        "optimize-autoloader": true
     },
     "minimum-stability": "dev",
     "prefer-stable": true
