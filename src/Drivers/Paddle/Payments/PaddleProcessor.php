@@ -41,18 +41,19 @@ class PaddleProcessor extends PaymentProcessor
 
             $currency = strtoupper($dto->currency);
             
-            // Get product title - check products array first, fallback to default
+            // Get product title from first product
             $productTitle = 'Default Product';
             if ($dto->products && is_array($dto->products) && isset($dto->products[0]['title'])) {
                 $productTitle = $dto->products[0]['title'];
             }
             
-            // Calculate amount
-            $amount = $dto->amount ?? 0;
+            // Calculate total amount from products
+            $amount = 0;
             if ($dto->products && is_array($dto->products)) {
-                $amount = 0;
                 foreach ($dto->products as $product) {
-                    $amount += ($product['amount'] ?? 0) * ($product['quantity'] ?? 1);
+                    $productAmount = $product['amount'] ?? 0;
+                    $quantity = $product['quantity'] ?? 1;
+                    $amount += $productAmount * $quantity;
                 }
             }
             

@@ -33,46 +33,42 @@ class StripeProcessor extends PaymentProcessor
             $lineItems = [];
             if ($dto->products) {
                 foreach ($dto->products as $product) {
-                    $lineItems[] = [
-                        'price_data' => [
+                    // If product has an id (like Stripe Price ID), use it directly
+                    if (!empty($product['id'])) {
+                        $lineItems[] = [
+                            'price' => $product['id'],
+                            'quantity' => $product['quantity'] ?? 1,
+                        ];
+                    } else {
+                        // Otherwise, create price_data with title and amount
+                        $priceData = [
                             'currency' => $dto->currency,
                             'product_data' => [
-                                'name' => $product['title'] ?? 'Default Product',
+                                'name' => $product['title'],
                             ],
-                            'unit_amount' => $product['amount'] ?? 0,
-                        ],
-                        'quantity' => $product['quantity'] ?? 1,
-                    ];
+                            'unit_amount' => $product['amount'],
+                        ];
+                        
+                        // Add recurring interval for subscription
+                        if ($dto->isSubscription) {
+                            $priceData['recurring'] = [
+                                'interval' => $dto->interval,
+                            ];
+                        }
+                        
+                        $lineItems[] = [
+                            'price_data' => $priceData,
+                            'quantity' => $product['quantity'] ?? 1,
+                        ];
+                    }
                 }
-            } else {
-                $priceData = [
-                    'currency' => $dto->currency,
-                    'unit_amount' => $dto->amount,
-                    // 'product_data' => [
-                    //     'name' => $dto->,
-                    // ],
-                ];
-                
-                // Add recurring interval for subscription mode
-                if ($dto->mode === 'subscription') {
-                    $priceData['recurring'] = [
-                        'interval' => $dto->interval,
-                    ];
-                }
-                
-                $lineItems = [
-                    [
-                        'price_data' => $priceData,
-                        'quantity' => $dto->quantity,
-                    ],
-                ];
             }
 
             $session = Session::create([
                 'line_items' => $lineItems,
                 'allow_promotion_codes' => $dto->isAllowPromotionCode,
                 'metadata' => $dto->metadata,
-                'mode' => $dto->mode,
+                'mode' => $dto->isSubscription ? 'subscription' : 'payment',
                 'success_url' => $dto->successUrl,
                 'cancel_url' => $dto->cancelUrl,
             ]);

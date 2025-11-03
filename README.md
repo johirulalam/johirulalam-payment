@@ -68,7 +68,7 @@ $result = $adapter->checkout([
     'amount' => 2000, // $20.00 in cents
     'product' => ['title' => 'Premium Plan'],
     'quantity' => 1,
-    'mode' => 'payment',
+    'is_subscription' => false,
     'success_url' => route('payment.success'),
     'cancel_url' => route('payment.cancel'),
 ]);

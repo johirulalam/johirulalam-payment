@@ -55,29 +55,22 @@ class PayPalProcessor extends PaymentProcessor
 
             $accessToken = $this->getAccessToken();
 
-            // Calculate total amount
+            // Calculate total amount from products
             $totalAmount = 0;
             $purchaseUnits = [];
 
             if ($dto->products && is_array($dto->products)) {
-                // Multiple products
                 foreach ($dto->products as $product) {
-                    $productAmount = ($product['amount'] ?? 0) * ($product['quantity'] ?? 1);
-                    $totalAmount += $productAmount;
+                    // Get amount either from product amount or by using id (though PayPal doesn't support price IDs like Stripe)
+                    $amount = $product['amount'] ?? 0;
+                    $quantity = $product['quantity'] ?? 1;
+                    $totalAmount += $amount * $quantity;
                 }
                 
                 $purchaseUnits[] = [
                     'amount' => [
                         'currency_code' => strtoupper($dto->currency),
                         'value' => number_format($totalAmount / 100, 2, '.', ''),
-                    ],
-                ];
-            } else {
-                // Single product/amount
-                $purchaseUnits[] = [
-                    'amount' => [
-                        'currency_code' => strtoupper($dto->currency),
-                        'value' => number_format(($dto->amount ?? 0) / 100, 2, '.', ''),
                     ],
                 ];
             }
