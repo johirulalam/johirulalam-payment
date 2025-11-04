@@ -226,205 +226,54 @@ $refund = Payment::driver('stripe')->refundPayment(
 
 ---
 
-## Handling Webhooks
-
-### Step 8: Create Webhook Controller
-
-```bash
-php artisan make:controller WebhookController
-```
-
-**app/Http/Controllers/WebhookController.php:**
-
-```php
-<?php
-
-namespace App\Http\Controllers;
-
-use Illuminate\Http\Request;
-use Sayed\Payment\Facades\Webhook;
-use App\Models\Order;
-use App\Models\Subscription;
-use Exception;
-
-class WebhookController extends Controller
-{
-    /**
-     * Handle incoming webhooks
-     */
-    public function handle(Request $request, string $provider)
-    {
-        $payload = $request->getContent();
-        $headers = collect($request->headers->all())
-            ->map(fn($v) => is_array($v) ? $v[0] : $v)
-            ->toArray();
-
-        try {
-            $event = Webhook::process($provider, $payload, $headers);
-            
-            // Log webhook
-            \Log::info('Webhook received', [
-                'provider' => $provider,
-                'event_type' => $event['event_type'],
-            ]);
-
-            // Handle different event types
-            $this->handleEvent($event);
-
-            return response()->json(['received' => true], 200);
-        } catch (Exception $e) {
-            \Log::error('Webhook error: ' . $e->getMessage());
-            return response()->json(['error' => $e->getMessage()], 400);
-        }
-    }
-
-    /**
-     * Handle specific event types
-     */
-    protected function handleEvent(array $event)
-    {
-        $eventType = $event['event_type'];
-
-        // Checkout/Payment completed
-        if (str_contains($eventType, 'checkout') || str_contains($eventType, 'payment')) {
-            $this->handlePaymentCompleted($event);
-        }
-
-        // Subscription events
-        if (str_contains($eventType, 'subscription')) {
-            $this->handleSubscriptionEvent($event);
-        }
-
-        // Invoice events
-        if (str_contains($eventType, 'invoice')) {
-            $this->handleInvoiceEvent($event);
-        }
-    }
-
-    /**
-     * Handle payment completed
-     */
-    protected function handlePaymentCompleted(array $event)
-    {
-        // Find order by metadata
-        $metadata = $event['metadata'] ?? [];
-        
-        if (isset($metadata['order_id'])) {
-            $order = Order::where('order_id', $metadata['order_id'])->first();
-            
-            if ($order) {
-                $order->update([
-                    'status' => 'paid',
-                    'payment_id' => $event['id'],
-                    'amount_paid' => $event['amount'],
-                    'paid_at' => now(),
-                ]);
-
-                // Send confirmation email
-                // Mail::to($order->user)->send(new PaymentConfirmation($order));
-            }
-        }
-    }
-
-    /**
-     * Handle subscription events
-     */
-    protected function handleSubscriptionEvent(array $event)
-    {
-        $status = $event['status'];
-        $subscriptionId = $event['subscription_id'];
-
-        $subscription = Subscription::where('provider_subscription_id', $subscriptionId)
-            ->first();
-
-        if ($subscription) {
-            $subscription->update([
-                'status' => $status,
-                'current_period_end' => $event['current_period_end'] ?? null,
-            ]);
-
-            // Handle cancellation
-            if ($status === 'canceled' || $status === 'cancelled') {
-                // Notify user
-                // Disable features
-            }
-        }
-    }
-
-    /**
-     * Handle invoice events
-     */
-    protected function handleInvoiceEvent(array $event)
-    {
-        if ($event['paid']) {
-            // Invoice was paid successfully
-            \Log::info('Invoice paid', [
-                'invoice_id' => $event['id'],
-                'amount' => $event['amount_paid'],
-            ]);
-        } else {
-            // Payment failed
-            \Log::warning('Invoice payment failed', [
-                'invoice_id' => $event['id'],
-            ]);
-        }
-    }
-}
-```
-
-### Step 9: Add Webhook Routes
-
-Add to `routes/api.php`:
-
-```php
-use App\Http\Controllers\WebhookController;
-
-Route::post('/webhooks/payment/{provider}', [WebhookController::class, 'handle'])
-    ->name('webhooks.payment');
-```
-
-### Step 10: Disable CSRF for Webhooks
-
-The package already includes middleware, but verify in `app/Http/Middleware/VerifyCsrfToken.php`:
-
-```php
-protected $except = [
-    'webhooks/*',
-];
-```
-
-Or the package middleware is automatically applied via the service provider.
-
-### Step 11: Register Webhook URLs
-
-Register webhook URLs with your payment providers:
-
-**Stripe:**
-- URL: `https://yourdomain.com/api/webhooks/payment/stripe`
-- Events: `checkout.session.completed`, `customer.subscription.*`, `invoice.*`
-
-**PayPal:**
-- URL: `https://yourdomain.com/api/webhooks/payment/paypal`
-- Events: `PAYMENT.CAPTURE.COMPLETED`, `BILLING.SUBSCRIPTION.*`
-
-**Paddle:**
-- URL: `https://yourdomain.com/api/webhooks/payment/paddle`
-- Events: `transaction.completed`, `subscription.*`
-
----
-
 ## Advanced Features
 
 ### Dynamic Provider Selection
 
 ```php
+use Sayed\Payment\Facades\Payment;
+use Sayed\Payment\Enums\PaymentMethod;
+
 // Use default provider from config
 $payment = Payment::driver();
 
-// Use specific provider
+// Use specific provider with string
 $stripePayment = Payment::driver('stripe');
 $paypalPayment = Payment::driver('paypal');
 $paddlePayment = Payment::driver('paddle');
+
+// Use specific provider with enum (type-safe)
+$stripePayment = Payment::driver(PaymentMethod::STRIPE);
+$paypalPayment = Payment::driver(PaymentMethod::PAYPAL);
+$paddlePayment = Payment::driver(PaymentMethod::PADDLE);
+
+// Dynamic selection with enum
+$provider = PaymentMethod::from($request->payment_method);
+$payment = Payment::driver($provider);
+```
+
+### Using PaymentMethod Enum
+
+```php
+use Sayed\Payment\Enums\PaymentMethod;
+
+// Get all available payment methods
+$methods = PaymentMethod::values(); // ['stripe', 'paypal', 'paddle']
+
+// Display names
+foreach (PaymentMethod::cases() as $method) {
+    echo $method->displayName(); // Stripe, PayPal, Paddle
+}
+
+// Type-safe payment creation
+$result = Payment::driver(PaymentMethod::STRIPE)->checkout([
+    'currency' => 'usd',
+    'products' => [
+        ['title' => 'Product', 'amount' => 2999, 'quantity' => 1]
+    ],
+    'is_subscription' => false,
+    'success_url' => route('payment.success'),
+]);
 ```
 
 ### Custom Metadata
