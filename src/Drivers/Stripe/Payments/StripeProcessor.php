@@ -13,6 +13,7 @@ use Stripe\InvoiceItem;
 use Stripe\Invoice;
 use Stripe\PaymentIntent;
 use Exception;
+use Stripe\StripeClient;
 
 class StripeProcessor extends PaymentProcessor
 {
@@ -22,6 +23,7 @@ class StripeProcessor extends PaymentProcessor
     {
         $secretKey = config('payment.providers.stripe.secret_key');
         Stripe::setApiKey($secretKey);
+        $this->stripe = new StripeClient($secretKey);
     }
 
     public function checkout(array $payload): array
@@ -113,63 +115,50 @@ class StripeProcessor extends PaymentProcessor
      * @return array
      * @throws Exception
      */
-    public function payWithInvoice(array $payload): array
+    public function payWithInvoice(array $payload)
     {
         try {
+
             // Validate and create DTO
             $dto = InvoicePaymentDTO::fromArray($payload);
 
-            // Create invoice items
-            $invoiceItemIds = [];
-            foreach ($dto->items as $item) {
-                $invoiceItem = InvoiceItem::create([
-                    'customer' => $dto->customerId,
-                    'amount' => $item['amount'],
-                    'currency' => $dto->currency,
-                    'description' => $item['description'],
-                    'quantity' => $item['quantity'] ?? 1,
-                ]);
-                $invoiceItemIds[] = $invoiceItem->id;
-            }
 
-            // Create invoice
-            $invoiceData = [
+            $invoice = Invoice::create([
                 'customer' => $dto->customerId,
-                'auto_advance' => $dto->autoAdvance,
-                'collection_method' => 'charge_automatically',
+                'currency' => $dto->currency,
                 'metadata' => $dto->metadata,
-            ];
-
-            if ($dto->description) {
-                $invoiceData['description'] = $dto->description;
-            }
-
-            if ($dto->daysUntilDue) {
-                $invoiceData['days_until_due'] = $dto->daysUntilDue;
-            }
-
-            $invoice = Invoice::create($invoiceData);
-
-            // Finalize invoice to make it payable
-            $invoice->finalizeInvoice();
-
-            // Pay invoice with payment method
-            $paymentIntent = $invoice->pay([
-                'payment_method' => $dto->paymentMethodId,
             ]);
 
-            return [
-                'success' => true,
-                'invoice_id' => $invoice->id,
-                'invoice_number' => $invoice->number,
-                'invoice_pdf' => $invoice->invoice_pdf,
-                'hosted_invoice_url' => $invoice->hosted_invoice_url,
-                'payment_intent_id' => $invoice->payment_intent,
-                'status' => $invoice->status,
-                'amount_paid' => $invoice->amount_paid / 100,
-                'amount_due' => $invoice->amount_due / 100,
-                'currency' => $invoice->currency,
-            ];
+            // Create invoice items - either from provided items or default single item
+            foreach ($dto->items as $item) {
+                $invoiceItemData = [
+                    'customer' => $dto->customerId,
+                    'invoice' => $invoice->id,
+                    'description' => $dto->description,
+                ];
+
+                // Use price_id if available, otherwise use amount
+                if (!empty($item['id'])) {
+                    $invoiceItemData['price'] = $item['id'];
+                    if (!empty($item['quantity'])) {
+                        $invoiceItemData['quantity'] = $item['quantity'];
+                    }
+                } else {
+                    $invoiceItemData['amount'] = $item['amount'];
+                }
+
+                InvoiceItem::create($invoiceItemData);
+            }
+
+            $paymentData = $dto->paymentMethodId
+                ? [
+                    'off_session' => true,
+                    'payment_method' => $dto->paymentMethodId,
+                ]
+                : [];
+
+            return $this->stripe->invoices->pay($invoice->id, $paymentData);
+
         } catch (Exception $e) {
             throw new Exception('Invoice payment failed: ' . $e->getMessage());
         }
