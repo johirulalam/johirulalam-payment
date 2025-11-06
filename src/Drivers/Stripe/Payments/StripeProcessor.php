@@ -6,12 +6,16 @@ use Sayed\Payment\Services\Payments\PaymentProcessor;
 use Sayed\Payment\DTOs\CheckoutDTO;
 use Sayed\Payment\DTOs\RefundDTO;
 use Sayed\Payment\DTOs\InvoicePaymentDTO;
+use Sayed\Payment\DTOs\ProductDTO;
+use Sayed\Payment\DTOs\RecurringProductDTO;
 use Stripe\Stripe;
 use Stripe\Checkout\Session;
 use Stripe\Customer;
 use Stripe\InvoiceItem;
 use Stripe\Invoice;
 use Stripe\PaymentIntent;
+use Stripe\Product;
+use Stripe\Price;
 use Exception;
 use Stripe\StripeClient;
 
@@ -257,6 +261,143 @@ class StripeProcessor extends PaymentProcessor
             ];
         } catch (Exception $e) {
             throw new Exception('Failed to retrieve invoice: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Create a product with one-time payment price
+     */
+    public function createProduct(array $data): ProductDTO
+    {
+        try {
+            // Create product
+            $product = Product::create([
+                'name' => $data['name'],
+                'description' => $data['description'] ?? null,
+                'metadata' => $data['metadata'] ?? [],
+            ]);
+
+            // Create one-time price
+            $price = Price::create([
+                'product' => $product->id,
+                'unit_amount' => $data['amount'], // in cents
+                'currency' => $data['currency'] ?? 'usd',
+                'metadata' => $data['price_metadata'] ?? [],
+            ]);
+
+            return new ProductDTO(
+                productId: $product->id,
+                name: $product->name,
+                amount: $price->unit_amount,
+                currency: $price->currency,
+                type: 'one_time',
+                priceId: $price->id,
+                description: $product->description,
+                metadata: $product->metadata->toArray()
+            );
+        } catch (Exception $e) {
+            throw new Exception('Failed to create product: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Create a product with recurring (subscription) price
+     */
+    public function createRecurringProduct(array $data): RecurringProductDTO
+    {
+        try {
+            // Create product
+            $product = Product::create([
+                'name' => $data['name'],
+                'description' => $data['description'] ?? null,
+                'metadata' => $data['metadata'] ?? [],
+            ]);
+
+            // Create recurring price
+            $price = Price::create([
+                'product' => $product->id,
+                'unit_amount' => $data['amount'], // in cents
+                'currency' => $data['currency'] ?? 'usd',
+                'recurring' => [
+                    'interval' => $data['interval'] ?? 'month', // day, week, month, year
+                    'interval_count' => $data['interval_count'] ?? 1,
+                ],
+                'metadata' => $data['price_metadata'] ?? [],
+            ]);
+
+            return new RecurringProductDTO(
+                productId: $product->id,
+                name: $product->name,
+                amount: $price->unit_amount,
+                currency: $price->currency,
+                interval: $price->recurring->interval,
+                intervalCount: $price->recurring->interval_count,
+                type: 'recurring',
+                priceId: $price->id,
+                planId: null,
+                description: $product->description,
+                trialDays: null,
+                metadata: $product->metadata->toArray()
+            );
+        } catch (Exception $e) {
+            throw new Exception('Failed to create recurring product: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * List all products
+     */
+    public function listProducts(int $limit = 10): array
+    {
+        try {
+            $products = Product::all(['limit' => $limit]);
+
+            return array_map(function ($product) {
+                return [
+                    'id' => $product->id,
+                    'name' => $product->name,
+                    'description' => $product->description,
+                    'active' => $product->active,
+                    'created' => $product->created,
+                ];
+            }, $products->data);
+        } catch (Exception $e) {
+            throw new Exception('Failed to list products: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get product with prices
+     */
+    public function getProduct(string $productId): array
+    {
+        try {
+            $product = Product::retrieve($productId);
+            $prices = Price::all(['product' => $productId]);
+
+            return [
+                'id' => $product->id,
+                'name' => $product->name,
+                'description' => $product->description,
+                'active' => $product->active,
+                'prices' => array_map(function ($price) {
+                    $priceData = [
+                        'id' => $price->id,
+                        'amount' => $price->unit_amount,
+                        'currency' => $price->currency,
+                        'type' => $price->type,
+                    ];
+
+                    if ($price->type === 'recurring') {
+                        $priceData['interval'] = $price->recurring->interval;
+                        $priceData['interval_count'] = $price->recurring->interval_count;
+                    }
+
+                    return $priceData;
+                }, $prices->data),
+            ];
+        } catch (Exception $e) {
+            throw new Exception('Failed to get product: ' . $e->getMessage());
         }
     }
 }

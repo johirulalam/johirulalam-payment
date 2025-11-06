@@ -5,6 +5,8 @@ namespace Sayed\Payment\Drivers\PayPal\Payments;
 use Sayed\Payment\Services\Payments\PaymentProcessor;
 use Sayed\Payment\DTOs\CheckoutDTO;
 use Sayed\Payment\DTOs\RefundDTO;
+use Sayed\Payment\DTOs\ProductDTO;
+use Sayed\Payment\DTOs\RecurringProductDTO;
 use GuzzleHttp\Client;
 use Exception;
 
@@ -142,6 +144,188 @@ class PayPalProcessor extends PaymentProcessor
             ];
         } catch (Exception $e) {
             throw new Exception('PayPal refund failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Create a product (one-time payment)
+     */
+    public function createProduct(array $data): ProductDTO
+    {
+        try {
+            $accessToken = $this->getAccessToken();
+
+            $response = $this->client->post('/v1/catalogs/products', [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                    'Content-Type' => 'application/json',
+                ],
+                'json' => [
+                    'name' => $data['name'],
+                    'description' => $data['description'] ?? '',
+                    'type' => 'DIGITAL', // or PHYSICAL
+                    'category' => $data['category'] ?? 'SOFTWARE',
+                ],
+            ]);
+
+            $product = json_decode($response->getBody(), true);
+
+            return new ProductDTO(
+                productId: $product['id'],
+                name: $product['name'],
+                amount: $data['amount'] ?? 0,
+                currency: $data['currency'] ?? 'USD',
+                type: 'one_time',
+                priceId: null,
+                description: $product['description'] ?? null,
+                metadata: []
+            );
+        } catch (Exception $e) {
+            throw new Exception('Failed to create PayPal product: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Create a recurring product (subscription plan)
+     */
+    public function createRecurringProduct(array $data): RecurringProductDTO
+    {
+        try {
+            $accessToken = $this->getAccessToken();
+
+            // First create a product
+            $productResponse = $this->client->post('/v1/catalogs/products', [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                    'Content-Type' => 'application/json',
+                ],
+                'json' => [
+                    'name' => $data['name'],
+                    'description' => $data['description'] ?? '',
+                    'type' => 'SERVICE',
+                    'category' => 'SOFTWARE',
+                ],
+            ]);
+
+            $product = json_decode($productResponse->getBody(), true);
+
+            // Then create a billing plan
+            $planResponse = $this->client->post('/v1/billing/plans', [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                    'Content-Type' => 'application/json',
+                ],
+                'json' => [
+                    'product_id' => $product['id'],
+                    'name' => $data['name'],
+                    'description' => $data['description'] ?? '',
+                    'billing_cycles' => [
+                        [
+                            'frequency' => [
+                                'interval_unit' => strtoupper($data['interval'] ?? 'MONTH'),
+                                'interval_count' => $data['interval_count'] ?? 1,
+                            ],
+                            'tenure_type' => 'REGULAR',
+                            'sequence' => 1,
+                            'total_cycles' => 0, // Infinite
+                            'pricing_scheme' => [
+                                'fixed_price' => [
+                                    'value' => number_format($data['amount'] / 100, 2, '.', ''),
+                                    'currency_code' => strtoupper($data['currency'] ?? 'USD'),
+                                ],
+                            ],
+                        ],
+                    ],
+                    'payment_preferences' => [
+                        'auto_bill_outstanding' => true,
+                        'setup_fee' => [
+                            'value' => '0',
+                            'currency_code' => strtoupper($data['currency'] ?? 'USD'),
+                        ],
+                        'setup_fee_failure_action' => 'CONTINUE',
+                        'payment_failure_threshold' => 3,
+                    ],
+                ],
+            ]);
+
+            $plan = json_decode($planResponse->getBody(), true);
+
+            return new RecurringProductDTO(
+                productId: $product['id'],
+                name: $plan['name'],
+                amount: $data['amount'],
+                currency: strtoupper($data['currency'] ?? 'USD'),
+                interval: strtolower($data['interval'] ?? 'month'),
+                intervalCount: $data['interval_count'] ?? 1,
+                type: 'recurring',
+                priceId: null,
+                planId: $plan['id'],
+                description: $plan['description'] ?? null,
+                trialDays: null,
+                metadata: []
+            );
+        } catch (Exception $e) {
+            throw new Exception('Failed to create PayPal subscription plan: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * List all products
+     */
+    public function listProducts(int $limit = 10): array
+    {
+        try {
+            $accessToken = $this->getAccessToken();
+
+            $response = $this->client->get('/v1/catalogs/products', [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                ],
+                'query' => [
+                    'page_size' => $limit,
+                ],
+            ]);
+
+            $data = json_decode($response->getBody(), true);
+
+            return array_map(function ($product) {
+                return [
+                    'id' => $product['id'],
+                    'name' => $product['name'],
+                    'description' => $product['description'] ?? '',
+                    'type' => $product['type'] ?? 'DIGITAL',
+                ];
+            }, $data['products'] ?? []);
+        } catch (Exception $e) {
+            throw new Exception('Failed to list PayPal products: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get product details
+     */
+    public function getProduct(string $productId): array
+    {
+        try {
+            $accessToken = $this->getAccessToken();
+
+            $response = $this->client->get("/v1/catalogs/products/{$productId}", [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                ],
+            ]);
+
+            $product = json_decode($response->getBody(), true);
+
+            return [
+                'id' => $product['id'],
+                'name' => $product['name'],
+                'description' => $product['description'] ?? '',
+                'type' => $product['type'] ?? 'DIGITAL',
+                'category' => $product['category'] ?? '',
+            ];
+        } catch (Exception $e) {
+            throw new Exception('Failed to get PayPal product: ' . $e->getMessage());
         }
     }
 }

@@ -226,6 +226,97 @@ $refund = Payment::driver('stripe')->refundPayment(
 
 ---
 
+## Product Creation
+
+Create products and subscription plans programmatically across all payment providers. All methods return DTOs for type-safe access.
+
+### Create One-Time Product
+
+```php
+use Sayed\Payment\Facades\Payment;
+
+// Create a one-time payment product
+$product = Payment::driver('stripe')->createProduct([
+    'name' => 'Premium E-book',
+    'description' => 'Complete guide to Laravel',
+    'amount' => 2999, // $29.99 in cents
+    'currency' => 'usd',
+]);
+
+// Access product details
+echo $product->productId;  // prod_xxxxx
+echo $product->priceId;    // price_xxxxx
+echo $product->amount;     // 2999
+```
+
+### Create Recurring Subscription
+
+```php
+// Create a monthly subscription
+$subscription = Payment::driver('stripe')->createRecurringProduct([
+    'name' => 'Pro Membership',
+    'description' => 'Monthly access to premium features',
+    'amount' => 1999, // $19.99 in cents
+    'currency' => 'usd',
+    'interval' => 'month', // day, week, month, year
+    'interval_count' => 1,
+]);
+
+// Use in checkout
+$checkout = Payment::driver('stripe')->checkout([
+    'success_url' => route('payment.success'),
+    'cancel_url' => route('payment.cancel'),
+    'products' => [
+        ['id' => $subscription->priceId, 'quantity' => 1]
+    ],
+    'is_subscription' => true,
+]);
+```
+
+### PayPal Product Creation
+
+```php
+// Create PayPal product
+$product = Payment::driver('paypal')->createProduct([
+    'name' => 'Online Course',
+    'description' => 'Complete PHP Course',
+    'amount' => 4999,
+    'currency' => 'USD',
+]);
+
+// Create PayPal subscription plan
+$plan = Payment::driver('paypal')->createRecurringProduct([
+    'name' => 'Monthly SaaS Plan',
+    'amount' => 2999,
+    'currency' => 'USD',
+    'interval' => 'MONTH',
+]);
+
+echo $plan->planId; // Plan ID for subscriptions
+```
+
+### Paddle Product Creation
+
+```php
+// Create Paddle product
+$product = Payment::driver('paddle')->createProduct([
+    'name' => 'Software License',
+    'amount' => 9999,
+    'currency' => 'USD',
+]);
+
+// Create Paddle subscription with trial
+$subscription = Payment::driver('paddle')->createRecurringProduct([
+    'name' => 'Basic Plan',
+    'amount' => 999,
+    'currency' => 'USD',
+    'interval' => 'month',
+    'trial_days' => 14,
+]);
+```
+
+---
+
 ## Advanced Features
 
 ### Dynamic Provider Selection
